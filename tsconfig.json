@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
+    "module": "NodeNext", // تم التعديل ليتوافق مع ESM
+    "moduleResolution": "NodeNext", // ضروري جداً لمشاريع type: module
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
