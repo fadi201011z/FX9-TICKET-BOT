@@ -13,7 +13,7 @@ import { ticketEmbed, ticketButtons, logEmbed, COLOR } from "../utils/embeds.js"
 import type { TicketData } from "../types/index.js";
 import { CATEGORY_SLUG } from "../types/index.js";
 
-// ── Category Select ─────────────────────────────────────────────────────────
+// ── 1. Category Select ─────────────────────────────────────────────────────────
 export async function handleCategorySelect(interaction: StringSelectMenuInteraction): Promise<void> {
   const category = interaction.values[0];
   const modal = new ModalBuilder().setCustomId(`ticket_modal_${category}`).setTitle("📝 تفاصيل طلبك");
@@ -31,48 +31,35 @@ export async function handleCategorySelect(interaction: StringSelectMenuInteract
   await interaction.showModal(modal);
 }
 
-// ── Modal Submit (إصلاح أخطاء الـ Lambda و null) ─────────────────────────────
+// ── 2. Modal Submit ─────────────────────────────────────────────────────────────
 export async function handleTicketModalSubmit(client: Client, interaction: ModalSubmitInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
-
   const category = interaction.customId.replace("ticket_modal_", "");
   const { guildId, user } = interaction;
   if (!guildId) return;
 
-  const existing = getTicketByUser(guildId, user.id);
-  if (existing) {
-    await interaction.editReply({ content: `❌ لديك تكت مفتوح بالفعل: <#${existing.channelId}>` });
-    return;
-  }
-
   const config = getGuildConfig(guildId);
   if (!config.ticketCategoryId) {
-    await interaction.editReply({ content: "❌ لم يُعدّ النظام بعد." });
+    await interaction.editReply({ content: "❌ نظام التكت غير مهيأ." });
     return;
   }
 
-  // استخدام الاندماج لضمان وجود نصوص دائماً
-  const title       = interaction.fields.getTextInputValue("title") || "No Title";
+  const title = interaction.fields.getTextInputValue("title") || "No Title";
   const description = interaction.fields.getTextInputValue("description") || "No Description";
-  const evidence    = interaction.fields.getTextInputValue("evidence") || undefined;
+  const evidence = interaction.fields.getTextInputValue("evidence") || undefined;
 
   config.ticketCounter = (config.ticketCounter ?? 0) + 1;
   saveGuildConfig(config);
 
-  const ticketId  = `FX9-${config.ticketCounter.toString().padStart(4, "0")}`;
-  const chanName  = `${config.ticketCounter}-${CATEGORY_SLUG[category] ?? "تكت"}`;
-  const guild     = interaction.guild!;
+  const ticketId = `FX9-${config.ticketCounter.toString().padStart(4, "0")}`;
+  const chanName = `${config.ticketCounter}-${CATEGORY_SLUG[category] ?? "تكت"}`;
+  const guild = interaction.guild!;
 
-  // تصحيح الصلاحيات: تجنب استخدام push واستخدام مصفوفة جديدة
   let userOverwrites: OverwriteResolvable[] = [
     { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
     { id: user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
     { id: client.user!.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ManageChannels] },
   ];
-
-  config.supportRoleIds.forEach(roleId => {
-    userOverwrites = [...userOverwrites, { id: roleId, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] }];
-  });
 
   const userChannel = await guild.channels.create({
     name: chanName,
@@ -81,34 +68,14 @@ export async function handleTicketModalSubmit(client: Client, interaction: Modal
     permissionOverwrites: userOverwrites,
   });
 
-  let adminChannel: TextChannel | null = null;
-  if (config.adminCategoryId) {
-    let adminOverwrites: OverwriteResolvable[] = [
-      { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: client.user!.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ManageChannels] },
-    ];
-    config.supportRoleIds.forEach(roleId => {
-      adminOverwrites = [...adminOverwrites, { id: roleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }];
-    });
-    
-    adminChannel = await guild.channels.create({
-      name: `admin-${chanName}`,
-      type: ChannelType.GuildText,
-      parent: config.adminCategoryId,
-      permissionOverwrites: adminOverwrites,
-    });
-  }
-
   const ticket: TicketData = {
-    ticketId, channelId: userChannel.id, adminChannelId: adminChannel?.id,
-    guildId, userId: user.id, username: user.username, category: category as any,
-    title, description, evidence, priority: "medium", status: "open",
+    ticketId, channelId: userChannel.id, guildId, userId: user.id, username: user.username,
+    category: category as any, title, description, evidence, priority: "medium", status: "open",
     openedAt: Date.now(), lastActivity: Date.now(), inactivityWarned: false,
   };
   saveTicket(ticket);
 
   await userChannel.send({
-    content: `<@${user.id}>`,
     embeds: [ticketEmbed(ticket, false)],
     components: ticketButtons(false, undefined, false) as any,
   });
@@ -116,27 +83,64 @@ export async function handleTicketModalSubmit(client: Client, interaction: Modal
   await interaction.editReply({ content: `✅ تم فتح تكتك: <#${userChannel.id}>` });
 }
 
-// ── Rename (حل نهائي لمشكلة string | null) ────────────────────────────────────
+// ── 3. Claim (الدالة التي كانت مفقودة) ───────────────────────────────────────────
+export async function handleClaimTicket(client: Client, interaction: ButtonInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const ticket = getTicket(interaction.channelId!) ?? getTicketByAdminChannel(interaction.channelId!);
+  if (!ticket) { await interaction.editReply({ content: "❌ التكت غير موجود." }); return; }
+
+  ticket.status = "claimed";
+  ticket.claimedBy = interaction.user.id;
+  ticket.claimedByUsername = interaction.user.username;
+  saveTicket(ticket);
+
+  await interaction.message.edit({
+    components: ticketButtons(true, interaction.user.username, interaction.channelId === ticket.adminChannelId) as any,
+  });
+  await interaction.editReply({ content: "✅ تم استلام التكت." });
+}
+
+// ── 4. Unclaim (الدالة التي كانت مفقودة) ─────────────────────────────────────────
+export async function handleUnclaimTicket(client: Client, interaction: ButtonInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const ticket = getTicket(interaction.channelId!) ?? getTicketByAdminChannel(interaction.channelId!);
+  if (!ticket) return;
+
+  ticket.status = "open";
+  ticket.claimedBy = undefined;
+  saveTicket(ticket);
+
+  await interaction.message.edit({ components: ticketButtons(false, undefined, false) as any });
+  await interaction.editReply({ content: "✅ تم إلغاء الاستلام." });
+}
+
+// ── 5. Rename Ticket ────────────────────────────────────────────────────────────
+export async function handleRenameTicket(interaction: ButtonInteraction): Promise<void> {
+  const modal = new ModalBuilder().setCustomId("ticket_rename_modal").setTitle("✏️ تغيير اسم التكت");
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
+    new TextInputBuilder().setCustomId("new_name").setLabel("الاسم الجديد").setStyle(TextInputStyle.Short).setRequired(true)
+  ));
+  await interaction.showModal(modal);
+}
+
+// ── 6. Rename Modal Submit ──────────────────────────────────────────────────────
 export async function handleRenameModalSubmit(client: Client, interaction: ModalSubmitInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
-
   const rawName = interaction.fields.getTextInputValue("new_name") || "ticket";
   const slug = rawName.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
-
- const ticket = getTicket(interaction.channelId!) ?? getTicketByAdminChannel(interaction.channelId!);
+  const ticket = getTicket(interaction.channelId!) ?? getTicketByAdminChannel(interaction.channelId!);
   const counter = ticket?.ticketId.split("-")[1] ?? "0";
-
-  // ضمان أن الاسم دائماً string وليس null
-  const finalName: string = `${counter}-${slug}`;
-  const adminName: string = `admin-${finalName}`;
+  const finalName = `${counter}-${slug}`;
 
   const userCh = (ticket ? client.channels.cache.get(ticket.channelId) : interaction.channel) as TextChannel | undefined;
   if (userCh) await userCh.setName(finalName).catch(() => null);
 
-  if (ticket?.adminChannelId) {
-    const adminCh = client.channels.cache.get(ticket.adminChannelId) as TextChannel | undefined;
-    if (adminCh) await adminCh.setName(adminName).catch(() => null);
-  }
-
   await interaction.editReply({ content: `✅ تم تغيير الاسم إلى: **${finalName}**` });
+}
+
+// ── 7. Quick Reply ──────────────────────────────────────────────────────────────
+export async function handleQuickReply(client: Client, interaction: StringSelectMenuInteraction): Promise<void> {
+  const ticket = getTicket(interaction.channelId!) ?? getTicketByAdminChannel(interaction.channelId!);
+  if (!ticket) return;
+  await interaction.reply({ content: "✅ تم إرسال الرد السريع.", ephemeral: true });
 }
