@@ -4,19 +4,26 @@ import { createClient } from "./bot.js";
 import { loadCommands, handleInteraction } from "./events/interactionCreate.js";
 import { handleMessage } from "./events/messageCreate.js";
 import { startInactivityMonitor } from "./handlers/inactivityHandler.js";
+import http from "node:http"; // استيراد وحدة http لحل مشكلة Render
 
 // ── التحقق من المتغيرات المطلوبة ──────────────────────────────────────────
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!TOKEN) {
   console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.error("  ❌  DISCORD_BOT_TOKEN غير موجود!");
-  console.error("");
-  console.error("  الحل:");
-  console.error("  1. انسخ ملف .env.example وسمّه .env");
-  console.error("  2. ضع توكن البوت في DISCORD_BOT_TOKEN");
   console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   process.exit(1);
 }
+
+// ── حل مشكلة Port Scan في Render ──────────────────────────────────────────
+// هذا الكود يفتح منفذ خادم وهمي لإعلام Render أن البوت يعمل بنجاح
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("FX9 Bot is Online! ✅");
+}).listen(PORT, () => {
+  console.log(` 📡  Web Server: Listening on port ${PORT} (Render Fix)`);
+});
 
 // ── تشغيل البوت ───────────────────────────────────────────────────────────
 const client = createClient();
@@ -45,11 +52,14 @@ client.once("ready", async (c) => {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 });
 
+// معالجة الأحداث
 client.on("interactionCreate", (i) => handleInteraction(client, i));
 client.on("messageCreate", (m) => handleMessage(client, m));
 
+// معالجة الأخطاء لضمان عدم توقف البوت
 client.on("error", (err) => console.error("[Bot Error]", err.message));
 process.on("unhandledRejection", (err) => console.error("[Rejection]", err));
+process.on("SIGINT", () => { client.destroy(); process.exit(0); });
 process.on("SIGTERM", () => { client.destroy(); process.exit(0); });
 
 client.login(TOKEN);
